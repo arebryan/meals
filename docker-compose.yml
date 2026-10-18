@@ -1,0 +1,76 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    ports:
+      - "127.0.0.1:3000:3000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgres://meal:meal@db:5432/meal
+      STORAGE_ENDPOINT: http://storage:4443
+      STORAGE_BUCKET: meal-assets
+      STORAGE_PUBLIC_HOST: http://localhost:4443
+      AUTH_URL: http://localhost:3000
+      WATCHPACK_POLLING: "true"
+    volumes:
+      - .:/app
+      - app_node_modules:/app/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+      storage:
+        condition: service_started
+      createbuckets:
+        condition: service_completed_successfully
+    command: ["npm", "run", "dev:docker"]
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: meal
+      POSTGRES_PASSWORD: meal
+      POSTGRES_DB: meal
+    ports:
+      # Bind to loopback only — default meal/meal must not be LAN-exposed.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meal -d meal"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  # GCS emulator (MinIO images were unavailable on this host's registry).
+  storage:
+    image: fsouza/fake-gcs-server:latest
+    command:
+      [
+        "-scheme",
+        "http",
+        "-port",
+        "4443",
+        "-external-url",
+        "http://localhost:4443",
+        "-data",
+        "/data",
+      ]
+    ports:
+      - "127.0.0.1:4443:4443"
+    volumes:
+      - gcsdata:/data
+
+  # Ensure the meal-assets bucket directory exists inside the emulator volume.
+  createbuckets:
+    image: busybox:1.36
+    volumes:
+      - gcsdata:/data
+    command: ["sh", "-c", "mkdir -p /data/meal-assets && echo ok"]
+
+volumes:
+  pgdata:
+  gcsdata:
+  app_node_modules:
